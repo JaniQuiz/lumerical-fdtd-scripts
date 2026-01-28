@@ -19,24 +19,22 @@ class LumericalGUI:
         self.check_config()
 
     def create_widgets(self):
-        # 路径输入框
+        # 路径输入框（现在是可编辑的下拉框）
         tk.Label(self.root, text="Lumerical路径:").grid(row=0, column=0, padx=5, pady=5)
         self.path_var = tk.StringVar()
-        self.path_entry = tk.Entry(self.root, textvariable=self.path_var, width=50)
-        self.path_entry.grid(row=0, column=1, padx=5, pady=5)
+        # 创建可编辑的Combobox，state="normal"表示可编辑
+        self.path_combo = ttk.Combobox(self.root, textvariable=self.path_var, width=50, state="normal")
+        self.path_combo.grid(row=0, column=1, padx=5, pady=5)
         
-        self.path_entry.bind('<KeyRelease>', lambda e: self.validate_path(self.path_var.get()))
-        self.path_entry.bind('<FocusOut>', lambda e: self.validate_path(self.path_var.get()))
+        # 绑定事件，当文本变化时验证
+        self.path_combo.bind('<KeyRelease>', lambda e: self.validate_path(self.path_var.get()))
+        self.path_combo.bind('<FocusOut>', lambda e: self.validate_path(self.path_var.get()))
+        # 添加下拉选择事件绑定
+        self.path_combo.bind("<<ComboboxSelected>>", self.on_path_selected)
         
         # 浏览按钮
         tk.Button(self.root, text="浏览...", command=self.browse_path).grid(
             row=0, column=2, padx=5, pady=5)
-        
-        # 常用路径下拉框
-        tk.Label(self.root, text="常用路径:").grid(row=3, column=0, padx=5, pady=5)
-        self.path_combo = ttk.Combobox(self.root, width=47, state="readonly")
-        self.path_combo.grid(row=3, column=1, padx=5, pady=5)
-        self.path_combo.bind("<<ComboboxSelected>>", self.on_path_selected)
         
         # 状态显示
         self.status_label = tk.Label(self.root, text="等待输入...", fg="blue")
@@ -159,6 +157,7 @@ class LumericalGUI:
         
         # 如果有有效配置，使用配置
         if valid_config:
+            # 设置Combobox的值为配置的路径
             self.path_var.set(config_path)
             if self.validate_path(config_path):
                 self.status_label.config(text=f"当前路径有效 ({config_version})", fg="green")
@@ -181,32 +180,27 @@ class LumericalGUI:
             if config_path and os.path.normpath(path) == os.path.normpath(config_path):
                 selected_index = i
         
-        # 如果没有检测到路径
-        if not formatted_paths:
-            formatted_paths = ["未检测到Lumerical安装"]
-            self.path_combo.config(state="disabled")
-        else:
-            self.path_combo.config(state="readonly")
-        
-        # 更新下拉框
+        # 更新下拉框选项
         self.path_combo['values'] = formatted_paths
-        
-        # 设置默认选择
-        if formatted_paths:
-            self.path_combo.current(selected_index)
         
         # 如果有配置且有效，但不在检测到的路径中，添加到选项
         if config_path and config_version and not any(os.path.normpath(p[0]) == os.path.normpath(config_path) for p in paths):
             display_text = f"{config_path} ({config_version}) [配置文件]"
             self.path_combo['values'] = (display_text,) + self.path_combo['values']
-            self.path_combo.current(0)
+            # 只设置纯路径，不是带版本信息的字符串
+            self.path_var.set(config_path)
+        elif formatted_paths:
+            # 设置默认选择
+            self.path_combo.current(selected_index)
+            # 只设置纯路径，不是带版本信息的字符串
+            pure_path = formatted_paths[selected_index].split(" (")[0]
+            self.path_var.set(pure_path)
 
     def on_path_selected(self, event):
-        """当下拉框选择变化时"""
+        """当下拉框选择变化时，提取纯路径"""
         selection = self.path_combo.get()
-        
-        # 提取路径（去掉后面的版本信息）
         if " (" in selection:
+            # 提取纯路径（去掉版本信息）
             path = selection.split(" (")[0]
             self.path_var.set(path)
             self.validate_path(path)
@@ -247,13 +241,14 @@ class LumericalGUI:
         """浏览文件夹对话框"""
         path = filedialog.askdirectory(title="选择Lumerical安装目录")
         if path:
+            # 设置Combobox的值为路径
             self.path_var.set(path)
             if self.validate_path(path):
                 self.status_label.config(text=f"路径有效 ({self.detect_version(path)})", fg="green")
             else:
                 self.status_label.config(text="路径无效，请检查", fg="red")
             
-            # 更新下拉框
+            # 更新下拉框选项
             common_paths = self.detect_common_paths()
             self.update_combobox(common_paths, path, self.detect_version(path))
 

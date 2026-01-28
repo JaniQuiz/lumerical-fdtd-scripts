@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import json
 import os
-from pathlib import Path
 import importlib.util
 
 class LumericalGUI:
@@ -39,18 +38,28 @@ class LumericalGUI:
         self.confirm_btn = tk.Button(self.root, text="确认路径", command=self.confirm_path)
         self.confirm_btn.grid(row=2, column=1, pady=10)
 
+    def get_lumapi_path(self, lumerical_root):
+        """从Lumerical根路径获取lumapi.py路径"""
+        return os.path.join(lumerical_root, "v241", "api", "python", "lumapi.py")
+
+    def get_lumerical_root(self, lumapi_path):
+        """从lumapi.py路径获取Lumerical根路径"""
+        return os.path.dirname(os.path.dirname(os.path.dirname(lumapi_path)))
+
     def check_config(self):
         """检查配置文件"""
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r') as f:
                     config = json.load(f)
-                path = config.get('lumerical_path')
-                if path and self.validate_path(path):
-                    self.path_var.set(path)
-                    self.status_label.config(text="当前路径有效", fg="green")
-                    # self.confirm_btn.config(state=tk.DISABLED)
-                    return
+                lumapi_path = config.get('lumapi_path')
+                if lumapi_path and os.path.exists(lumapi_path):
+                    # 从lumapi.py路径获取Lumerical根路径用于显示
+                    lumerical_root = self.get_lumerical_root(lumapi_path)
+                    self.path_var.set(lumerical_root)
+                    if self.validate_path(lumerical_root):
+                        self.status_label.config(text="当前路径有效", fg="green")
+                        return
             except Exception as e:
                 messagebox.showerror("错误", f"配置文件读取失败: {str(e)}")
         
@@ -59,26 +68,26 @@ class LumericalGUI:
     def validate_path(self, path):
         """验证路径有效性"""
         try:
-            input_path = Path(path).resolve()
-            lumapi_path = input_path / "v241" / "api" / "python" / "lumapi.py"
-            
             if not path:  # 空值检查
                 self.status_label.config(text="请输入有效路径", fg="red")
-                self.confirm_btn.config(state=tk.DISABLED)  # 空路径禁用按钮
+                self.confirm_btn.config(state=tk.DISABLED)
                 return False
                 
-            if not lumapi_path.exists():
+            # 获取lumapi.py的完整路径
+            lumapi_path = self.get_lumapi_path(path)
+            
+            if not os.path.exists(lumapi_path):
                 self.status_label.config(text="lumapi.py未找到", fg="red")
                 self.confirm_btn.config(state=tk.DISABLED)
                 return False
                 
             # 测试导入
-            spec = importlib.util.spec_from_file_location('lumapi', str(lumapi_path))
+            spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
             lumapi = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(lumapi)
             
             self.status_label.config(text="路径有效", fg="green")
-            self.confirm_btn.config(state=tk.NORMAL)  # 有效路径启用按钮
+            self.confirm_btn.config(state=tk.NORMAL)
             return True
             
         except Exception as e:
@@ -107,13 +116,16 @@ class LumericalGUI:
             messagebox.showerror("错误", "路径无效，请重新选择")
             return
             
+        # 获取lumapi.py的完整路径用于保存
+        lumapi_path = self.get_lumapi_path(path)
+        
         # 保存配置
         try:
             with open(self.config_path, 'w') as f:
-                json.dump({'lumerical_path': path}, f)
+                json.dump({'lumapi_path': os.path.abspath(lumapi_path)}, f)
             
             self.status_label.config(text="路径已更新并有效", fg="green")
-            self.confirm_btn.config(state=tk.DISABLED)  # 保存后禁用按钮
+            self.confirm_btn.config(state=tk.DISABLED)
             messagebox.showinfo("成功", "路径已更新并验证有效")
         except Exception as e:
             messagebox.showerror("错误", f"配置文件保存失败: {str(e)}")

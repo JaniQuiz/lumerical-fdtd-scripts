@@ -3,6 +3,7 @@ from tkinter import filedialog, messagebox
 import json
 import os
 import importlib.util
+import re
 
 class LumericalGUI:
     def __init__(self, root):
@@ -38,13 +39,39 @@ class LumericalGUI:
         self.confirm_btn = tk.Button(self.root, text="确认路径", command=self.confirm_path)
         self.confirm_btn.grid(row=2, column=1, pady=10)
 
-    def get_lumapi_path(self, lumerical_root):
-        """从Lumerical根路径获取lumapi.py路径"""
-        return os.path.join(lumerical_root, "v241", "api", "python", "lumapi.py")
+    def detect_version(self, lumerical_root):
+        """检测Lumerical安装目录下的有效版本号"""
+        try:
+            if not os.path.exists(lumerical_root):
+                return None
+                
+            # 检查是否存在v+三位数字的文件夹
+            for item in os.listdir(lumerical_root):
+                if os.path.isdir(os.path.join(lumerical_root, item)):
+                    # 匹配v+三位数字的模式，例如v231, v242
+                    if re.match(r'^v\d{3}$', item):
+                        # 验证该目录下是否存在lumapi.py
+                        lumapi_path = os.path.join(lumerical_root, item, "api", "python", "lumapi.py")
+                        if os.path.exists(lumapi_path):
+                            return item
+            return None
+        except Exception:
+            return None
 
-    def get_lumerical_root(self, lumapi_path):
-        """从lumapi.py路径获取Lumerical根路径"""
-        return os.path.dirname(os.path.dirname(os.path.dirname(lumapi_path)))
+    def get_lumapi_path(self, lumerical_root, version):
+        """从Lumerical根路径和版本获取lumapi.py路径"""
+        return os.path.join(lumerical_root, version, "api", "python", "lumapi.py")
+
+    def get_lumerical_info(self, lumapi_path):
+        """从lumapi.py路径获取Lumerical根路径和版本"""
+        # 例如：D:\Program Files\Lumerical\v241\api\python\lumapi.py
+        # 返回：D:\Program Files\Lumerical, v241
+        parts = lumapi_path.split(os.sep)
+        if len(parts) >= 4 and parts[-4].startswith('v') and re.match(r'^v\d{3}$', parts[-4]):
+            version = parts[-4]
+            lumerical_root = os.sep.join(parts[:-4])
+            return lumerical_root, version
+        return None, None
 
     def check_config(self):
         """检查配置文件"""
@@ -52,41 +79,46 @@ class LumericalGUI:
             try:
                 with open(self.config_path, 'r') as f:
                     config = json.load(f)
-                lumapi_path = config.get('lumapi_path')
-                if lumapi_path and os.path.exists(lumapi_path):
-                    # 从lumapi.py路径获取Lumerical根路径用于显示
-                    lumerical_root = self.get_lumerical_root(lumapi_path)
-                    self.path_var.set(lumerical_root)
-                    if self.validate_path(lumerical_root):
-                        self.status_label.config(text="当前路径有效", fg="green")
-                        return
+                lumerical_path = config.get('lumerical_path')
+                version = config.get('version')
+                
+                if lumerical_path and version:
+                    # 验证配置是否有效
+                    lumapi_path = self.get_lumapi_path(lumerical_path, version)
+                    if os.path.exists(lumapi_path):
+                        self.path_var.set(lumerical_path)
+                        if self.validate_path(lumerical_path):
+                            self.status_label.config(text=f"当前路径有效 ({version})", fg="green")
+                            return
             except Exception as e:
                 messagebox.showerror("错误", f"配置文件读取失败: {str(e)}")
         
         self.status_label.config(text="请输入有效路径", fg="red")
 
     def validate_path(self, path):
-        """验证路径有效性"""
+        """验证路径有效性并自动检测版本号"""
         try:
             if not path:  # 空值检查
                 self.status_label.config(text="请输入有效路径", fg="red")
                 self.confirm_btn.config(state=tk.DISABLED)
                 return False
                 
-            # 获取lumapi.py的完整路径
-            lumapi_path = self.get_lumapi_path(path)
-            
-            if not os.path.exists(lumapi_path):
-                self.status_label.config(text="lumapi.py未找到", fg="red")
+            # 检测版本号
+            version = self.detect_version(path)
+            if not version:
+                self.status_label.config(text="未找到有效的Lumerical版本", fg="red")
                 self.confirm_btn.config(state=tk.DISABLED)
                 return False
                 
+            # 获取lumapi.py的完整路径
+            lumapi_path = self.get_lumapi_path(path, version)
+            
             # 测试导入
             spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
             lumapi = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(lumapi)
             
-            self.status_label.config(text="路径有效", fg="green")
+            self.status_label.config(text=f"路径有效 ({version})", fg="green")
             self.confirm_btn.config(state=tk.NORMAL)
             return True
             
@@ -101,7 +133,7 @@ class LumericalGUI:
         if path:
             self.path_var.set(path)
             if self.validate_path(path):
-                self.status_label.config(text="路径有效", fg="green")
+                self.status_label.config(text=f"路径有效 ({self.detect_version(path)})", fg="green")
             else:
                 self.status_label.config(text="路径无效，请检查", fg="red")
 
@@ -112,21 +144,23 @@ class LumericalGUI:
             messagebox.showwarning("警告", "请输入路径")
             return
             
-        if not self.validate_path(path):
-            messagebox.showerror("错误", "路径无效，请重新选择")
+        # 验证路径并自动检测版本号
+        version = self.detect_version(path)
+        if not version:
+            messagebox.showerror("错误", "未找到有效的Lumerical版本")
             return
             
-        # 获取lumapi.py的完整路径用于保存
-        lumapi_path = self.get_lumapi_path(path)
-        
         # 保存配置
         try:
             with open(self.config_path, 'w') as f:
-                json.dump({'lumapi_path': os.path.abspath(lumapi_path)}, f)
+                json.dump({
+                    'lumerical_path': os.path.abspath(path),
+                    'version': version
+                }, f)
             
-            self.status_label.config(text="路径已更新并有效", fg="green")
+            self.status_label.config(text=f"路径已更新并有效 ({version})", fg="green")
             self.confirm_btn.config(state=tk.DISABLED)
-            messagebox.showinfo("成功", "路径已更新并验证有效")
+            messagebox.showinfo("成功", f"路径已更新并验证有效 ({version})")
         except Exception as e:
             messagebox.showerror("错误", f"配置文件保存失败: {str(e)}")
 

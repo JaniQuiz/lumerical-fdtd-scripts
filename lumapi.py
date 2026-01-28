@@ -4,31 +4,64 @@ import sys
 import matplotlib.pyplot as plt
 import json
 import importlib
-from pathlib import Path
+import importlib.util
+import re
 
 CONFIG_PATH = 'config.json'
 
-def get_lumapi_path(lumerical_root):
-    """从Lumerical根路径获取lumapi.py路径"""
-    return os.path.join(lumerical_root, "v241", "api", "python", "lumapi.py")
+def detect_version(lumerical_root):
+    """检测Lumerical安装目录下的有效版本号"""
+    try:
+        if not os.path.exists(lumerical_root):
+            return None
+            
+        # 检查是否存在v+三位数字的文件夹
+        for item in os.listdir(lumerical_root):
+            if os.path.isdir(os.path.join(lumerical_root, item)):
+                # 匹配v+三位数字的模式，例如v231, v242
+                if re.match(r'^v\d{3}$', item):
+                    # 验证该目录下是否存在lumapi.py
+                    lumapi_path = os.path.join(lumerical_root, item, "api", "python", "lumapi.py")
+                    if os.path.exists(lumapi_path):
+                        return item
+        return None
+    except Exception:
+        return None
 
-def get_lumerical_root(lumapi_path):
-    """从lumapi.py路径获取Lumerical根路径"""
-    return os.path.dirname(os.path.dirname(os.path.dirname(lumapi_path)))
+def get_lumapi_path(lumerical_root, version):
+    """从Lumerical根路径和版本获取lumapi.py路径"""
+    return os.path.join(lumerical_root, version, "api", "python", "lumapi.py")
 
-def validate_path(lumerical_root: str) -> object:
-    """验证Lumerical根目录路径有效性"""
+def validate_path(lumerical_root: str, version: str = None) -> object:
+    """验证Lumerical路径有效性并返回lumapi对象
+    
+    参数:
+    lumerical_root: Lumerical安装根目录
+    version: 版本号（可选），如"v241"
+    
+    返回:
+    lumapi对象或None
+    """
     try:
         if not lumerical_root:
             print("错误：路径不能为空")
-            return False
+            return None
             
+        lumerical_root = os.path.abspath(lumerical_root)
+        
+        # 如果没有提供版本号，尝试自动检测
+        if not version:
+            version = detect_version(lumerical_root)
+            if not version:
+                print(f"错误：在指定路径未找到有效的Lumerical版本 (查找路径：{lumerical_root})")
+                return None
+        
         # 获取lumapi.py的完整路径
-        lumapi_path = get_lumapi_path(lumerical_root)
+        lumapi_path = get_lumapi_path(lumerical_root, version)
         
         if not os.path.exists(lumapi_path):
             print(f"错误：在指定路径未找到 lumapi.py 文件（查找路径：{lumapi_path}）")
-            return False
+            return None
             
         # 测试导入
         spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
@@ -42,7 +75,7 @@ def validate_path(lumerical_root: str) -> object:
         
     except Exception as e:
         print(f"错误：路径验证失败 - {str(e)}")
-        return False
+        return None
 
 def create_cmap(color_type):
     """
@@ -456,30 +489,43 @@ def RorySommerfeld_Vector(lamb, x_near, y_near, E_near_x, E_near_y, x_far, y_far
 
 
 class LumericalAPI:
-    def __init__(self, path=''):
+    def __init__(self, lumerical_path='', version=''):
         self.config_path = CONFIG_PATH
-        if not path:
-            # 读取config.json中的路径
-            with open(self.config_path, 'r') as f:
-                self.config = json.load(f)
-            self.config_path = self.config.get('lumerical_path')
-            self.lumapi = validate_path(self.config_path)
-            # 检测路径是否有效
-            if(not self.lumapi):
-                raise ValueError(f"错误：config.json中的路径无效，请检查路径{self.config_path}")
-        else:
-            self.config_path = path
-            self.lumapi = validate_path(self.config_path)
-            if(not self.lumapi):
-                raise ValueError(f"错误：路径无效，请检查路径{path}")
-    
+        
+        # 如果没有提供路径，尝试从配置文件加载
+        if not lumerical_path:
+            try:
+                with open(self.config_path, 'r') as f:
+                    config = json.load(f)
+                lumerical_path = config.get('lumerical_path')
+                version = config.get('version')
+                
+                if not lumerical_path:
+                    raise ValueError("配置文件中缺少lumerical_path字段")
+                    
+            except Exception as e:
+                raise ValueError(f"配置文件读取失败: {str(e)}")
+        
+        # 验证路径
+        self.lumapi = validate_path(lumerical_path, version)
+        
+        # 检测路径是否有效
+        if not self.lumapi:
+            raise ValueError(f"错误：Lumerical路径无效，请检查路径{lumerical_path}和版本{version}")
+        
+        self.lumerical_path = lumerical_path
+        self.version = version
+
     def FDTD(self, filepath=''):
-        return FDTD(self.lumapi, filepath)
+        return FDTD(self.lumapi, filepath, self.lumerical_path, self.version)
     
 class FDTD():
-    def __init__(self, lumapi, filename=''):
+    def __init__(self, lumapi, filename='', lumerical_path='', version=''):
         self.lumapi = lumapi
         self.filename = filename
+        self.lumerical_path = lumerical_path
+        self.version = version
+        
         if not filename:
             self.fdtd = lumapi.FDTD()
         else:

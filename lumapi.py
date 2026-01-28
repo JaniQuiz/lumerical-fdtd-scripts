@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import json
 import importlib
 import importlib.util
-import re
+import re, platform
 
 CONFIG_PATH = 'config.json'
 
@@ -67,9 +67,10 @@ def validate_path(lumerical_root: str, version: str = None) -> object:
         spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
         lumapi = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(lumapi)
-        
-        # 测试通过后添加 DLL 目录
-        os.add_dll_directory(lumerical_root)
+
+        if platform.system() == "Windows":
+            # windows系统导入dll目录
+            os.add_dll_directory(lumerical_root)
         
         return lumapi
         
@@ -556,7 +557,7 @@ if __name__ == '__main__':
         z_max=0,
         material=material_base,
     )
-    fdtd.save()
+    # fdtd.save()
     # fdtd.run()
     fdtd.close()
 

@@ -517,26 +517,75 @@ class LumAPI:
         self.lumerical_path = lumerical_path
         self.version = version
 
-    def FDTD(self, filepath=''):
-        return FDTD(self.lumapi, filepath, self.lumerical_path, self.version)
+    def FDTD(self, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        return FDTD(self.lumapi, filename, key, hide, serverArgs, remoteArgs, **kwargs)
+    
+    def MODE(self, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        return MODE(self.lumapi, filename, key, hide, serverArgs, remoteArgs, **kwargs)
+    
+    def DEVICE(self, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        return MODE(self.lumapi, filename, key, hide, serverArgs, remoteArgs, **kwargs)
+    
+    def INTERCONNECT(self, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        return MODE(self.lumapi, filename, key, hide, serverArgs, remoteArgs, **kwargs)
     
 class FDTD():
-    def __init__(self, lumapi, filename='', lumerical_path='', version=''):
+    def __init__(self, lumapi, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
         self.lumapi = lumapi
         self.filename = filename
-        self.lumerical_path = lumerical_path
-        self.version = version
         
-        if not filename:
-            self.fdtd = lumapi.FDTD()
-        else:
-            self.fdtd = lumapi.FDTD(filename)
+        self.fdtd = lumapi.FDTD(filename, key, hide, serverArgs, remoteArgs, **kwargs)
 
     def __getattr__(self, name):
         '''
         将原本函数转发回去
         '''
         return getattr(self.fdtd, name)
+    
+class MODE():
+    def __init__(self, lumapi, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        self.lumapi = lumapi
+        self.filename = filename
+        
+        if not filename:
+            self.mode = lumapi.MODE()
+        else:
+            self.mode = lumapi.MODE(filename, key, hide, serverArgs, remoteArgs, **kwargs)
+
+    def __getattr__(self, name):
+        '''
+        将原本函数转发回去
+        '''
+        return getattr(self.mode, name)
+    
+class DEVICE():
+    def __init__(self, lumapi, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        self.lumapi = lumapi
+        self.filename = filename
+        
+        if not filename:
+            self.device = lumapi.DEVICE()
+        else:
+            self.device = lumapi.DEVICE(filename, key, hide, serverArgs, remoteArgs, **kwargs)
+
+    def __getattr__(self, name):
+        '''
+        将原本函数转发回去
+        '''
+        return getattr(self.device, name)
+    
+class INTERCONNECT():
+    def __init__(self, lumapi, filename=None, key = None, hide = False, serverArgs = {}, remoteArgs = {}, **kwargs):
+        self.lumapi = lumapi
+        self.filename = filename
+        
+        self.interconnect = lumapi.INTERCONNECT(filename, key, hide, serverArgs, remoteArgs, **kwargs)
+
+    def __getattr__(self, name):
+        '''
+        将原本函数转发回去
+        '''
+        return getattr(self.interconnect, name)
 
 
 if __name__ == '__main__':

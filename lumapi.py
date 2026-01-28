@@ -8,27 +8,35 @@ from pathlib import Path
 
 CONFIG_PATH = 'config.json'
 
-def validate_path(path: str) -> bool:
-    """验证路径有效性"""
+def get_lumapi_path(lumerical_root):
+    """从Lumerical根路径获取lumapi.py路径"""
+    return os.path.join(lumerical_root, "v241", "api", "python", "lumapi.py")
+
+def get_lumerical_root(lumapi_path):
+    """从lumapi.py路径获取Lumerical根路径"""
+    return os.path.dirname(os.path.dirname(os.path.dirname(lumapi_path)))
+
+def validate_path(lumerical_root: str) -> object:
+    """验证Lumerical根目录路径有效性"""
     try:
-        if not path:
+        if not lumerical_root:
             print("错误：路径不能为空")
             return False
             
-        input_path = Path(path).resolve()
-        lumapi_path = input_path / "v241" / "api" / "python" / "lumapi.py"
+        # 获取lumapi.py的完整路径
+        lumapi_path = get_lumapi_path(lumerical_root)
         
-        if not lumapi_path.exists():
+        if not os.path.exists(lumapi_path):
             print(f"错误：在指定路径未找到 lumapi.py 文件（查找路径：{lumapi_path}）")
             return False
             
         # 测试导入
-        spec = importlib.util.spec_from_file_location('lumapi', str(lumapi_path))
+        spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
         lumapi = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(lumapi)
         
         # 测试通过后添加 DLL 目录
-        os.add_dll_directory(str(input_path))
+        os.add_dll_directory(lumerical_root)
         
         return lumapi
         

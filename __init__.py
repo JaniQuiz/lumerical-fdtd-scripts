@@ -1,3 +1,0 @@
-from lumapi import *
-
-

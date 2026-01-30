@@ -20,10 +20,10 @@ class LumericalGUI:
 
     def create_widgets(self):
         # 路径输入框（现在是可编辑的下拉框）
-        tk.Label(self.root, text="Lumerical路径:").grid(row=0, column=0, padx=5, pady=5)
+        tk.Label(self.root, text="Lumerical/Ansys路径:").grid(row=0, column=0, padx=5, pady=5)
         self.path_var = tk.StringVar()
         # 创建可编辑的Combobox，state="normal"表示可编辑
-        self.path_combo = ttk.Combobox(self.root, textvariable=self.path_var, width=50, state="normal")
+        self.path_combo = ttk.Combobox(self.root, textvariable=self.path_var, width=60, state="normal")
         self.path_combo.grid(row=0, column=1, padx=5, pady=5)
         
         # 绑定事件，当文本变化时验证
@@ -45,7 +45,7 @@ class LumericalGUI:
         self.confirm_btn.grid(row=2, column=1, pady=10)
 
     def detect_common_paths(self):
-        """检测常见Lumerical安装路径"""
+        """检测常见Lumerical及Ansys安装路径"""
         common_paths = []
         
         # 检测Windows系统
@@ -65,9 +65,13 @@ class LumericalGUI:
             # 检测每个驱动器的常见路径
             for drive in drives:
                 potential_paths = [
+                    # 原生 Lumerical 路径
                     os.path.join(drive, "Program Files", "Lumerical"),
                     os.path.join(drive, "Program Files (x86)", "Lumerical"),
-                    os.path.join(drive, "Lumerical")  # 可能直接安装在根目录
+                    os.path.join(drive, "Lumerical"),
+                    # Ansys Unified Installer 路径
+                    os.path.join(drive, "Program Files", "Ansys Inc"),
+                    os.path.join(drive, "Program Files (x86)", "Ansys Inc")
                 ]
                 
                 for path in potential_paths:
@@ -80,7 +84,13 @@ class LumericalGUI:
         elif platform.system() == "Linux":
             potential_paths = [
                 "/opt/lumerical",
-                "/usr/local/lumerical"
+                "/usr/local/lumerical",
+                # Ansys Unified Installer Linux 路径
+                "/usr/ansys_inc",
+                "/opt/ansys_inc",
+                # 支持用户目录下的Ansys安装 (e.g., ~/Ansys/ansys_inc)
+                os.path.expanduser("~/Ansys/ansys_inc"),
+                os.path.expanduser("~/ansys_inc")
             ]
             
             for path in potential_paths:
@@ -92,37 +102,76 @@ class LumericalGUI:
         return common_paths
 
     def detect_version(self, lumerical_root):
-        """检测Lumerical安装目录下的有效版本号"""
+        """
+        检测安装目录下的有效版本号
+        兼容两种结构：
+        1. Standalone: root/v241/api/python/lumapi.py
+        2. Ansys Unified: root/v252/Lumerical/api/python/lumapi.py
+        """
         try:
             if not os.path.exists(lumerical_root):
                 return None
                 
             # 检查是否存在v+三位数字的文件夹
             for item in os.listdir(lumerical_root):
-                if os.path.isdir(os.path.join(lumerical_root, item)):
-                    # 匹配v+三位数字的模式，例如v231, v242
+                item_path = os.path.join(lumerical_root, item)
+                if os.path.isdir(item_path):
+                    # 匹配v+三位数字的模式，例如v231, v242, v252
                     if re.match(r'^v\d{3}$', item):
-                        # 验证该目录下是否存在lumapi.py
-                        lumapi_path = os.path.join(lumerical_root, item, "api", "python", "lumapi.py")
-                        if os.path.exists(lumapi_path):
+                        # 情况1：检查旧版结构 (Standalone)
+                        path_standalone = os.path.join(item_path, "api", "python", "lumapi.py")
+                        if os.path.exists(path_standalone):
+                            return item
+                            
+                        # 情况2：检查Ansys Unified结构 (包含Lumerical子文件夹)
+                        path_ansys = os.path.join(item_path, "Lumerical", "api", "python", "lumapi.py")
+                        if os.path.exists(path_ansys):
                             return item
             return None
         except Exception:
             return None
 
     def get_lumapi_path(self, lumerical_root, version):
-        """从Lumerical根路径和版本获取lumapi.py路径"""
-        return os.path.join(lumerical_root, version, "api", "python", "lumapi.py")
+        """
+        根据根路径和版本获取lumapi.py路径
+        自动判断是Standalone结构还是Ansys Unified结构
+        """
+        base_path = os.path.join(lumerical_root, version)
+        
+        # 优先检查 Ansys Unified 结构 (vXXX/Lumerical/api/...)
+        ansys_path = os.path.join(base_path, "Lumerical", "api", "python", "lumapi.py")
+        if os.path.exists(ansys_path):
+            return ansys_path
+            
+        # 其次检查 Standalone 结构 (vXXX/api/...)
+        standalone_path = os.path.join(base_path, "api", "python", "lumapi.py")
+        if os.path.exists(standalone_path):
+            return standalone_path
+            
+        # 默认返回Standalone路径（即使不存在），用于显示或后续报错
+        return standalone_path
 
     def get_lumerical_info(self, lumapi_path):
-        """从lumapi.py路径获取Lumerical根路径和版本"""
-        # 例如：D:\Program Files\Lumerical\v241\api\python\lumapi.py
-        # 返回：D:\Program Files\Lumerical, v241
+        """
+        从lumapi.py路径反向获取Lumerical根路径和版本
+        兼容两种路径深度
+        """
         parts = lumapi_path.split(os.sep)
-        if len(parts) >= 4 and parts[-4].startswith('v') and re.match(r'^v\d{3}$', parts[-4]):
+        
+        # 检查 Standalone 结构: .../v241/api/python/lumapi.py
+        # 倒数第4个应该是 vXXX
+        if len(parts) >= 4 and re.match(r'^v\d{3}$', parts[-4]):
             version = parts[-4]
             lumerical_root = os.sep.join(parts[:-4])
             return lumerical_root, version
+            
+        # 检查 Ansys Unified 结构: .../v252/Lumerical/api/python/lumapi.py
+        # 倒数第5个应该是 vXXX
+        if len(parts) >= 5 and re.match(r'^v\d{3}$', parts[-5]):
+            version = parts[-5]
+            lumerical_root = os.sep.join(parts[:-5])
+            return lumerical_root, version
+            
         return None, None
 
     def check_config(self):
@@ -160,8 +209,9 @@ class LumericalGUI:
             # 设置Combobox的值为配置的路径
             self.path_var.set(config_path)
             if self.validate_path(config_path):
-                self.status_label.config(text=f"当前路径有效 ({config_version})", fg="green")
-                return
+                # 这里的status_label可能会被validate_path覆盖，所以不需要额外操作
+                pass
+            return
         
         # 如果没有有效配置，显示提示
         self.status_label.config(text="请输入有效路径", fg="red")
@@ -216,19 +266,28 @@ class LumericalGUI:
             # 检测版本号
             version = self.detect_version(path)
             if not version:
-                self.status_label.config(text="未找到有效的Lumerical版本", fg="red")
+                self.status_label.config(text="未找到有效的版本文件夹(vXXX)", fg="red")
                 self.confirm_btn.config(state=tk.DISABLED)
                 return False
                 
-            # 获取lumapi.py的完整路径
+            # 获取lumapi.py的完整路径 (get_lumapi_path 现在会自动处理两种结构)
             lumapi_path = self.get_lumapi_path(path, version)
             
+            if not os.path.exists(lumapi_path):
+                 self.status_label.config(text=f"路径下未找到API文件: {lumapi_path}", fg="red")
+                 self.confirm_btn.config(state=tk.DISABLED)
+                 return False
+
             # 测试导入
             spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
             lumapi = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(lumapi)
             
-            self.status_label.config(text=f"路径有效 ({version})", fg="green")
+            # 显示成功信息，区分是原生Lumerical还是Ansys Unified
+            is_ansys = "Ansys" in path or "ansys" in path or "Lumerical" in lumapi_path.replace(path, "")
+            type_str = "Ansys Unified" if is_ansys else "Standalone"
+            
+            self.status_label.config(text=f"路径有效 ({version} - {type_str})", fg="green")
             self.confirm_btn.config(state=tk.NORMAL)
             return True
             
@@ -239,14 +298,11 @@ class LumericalGUI:
 
     def browse_path(self):
         """浏览文件夹对话框"""
-        path = filedialog.askdirectory(title="选择Lumerical安装目录")
+        path = filedialog.askdirectory(title="选择Lumerical或Ansys Inc安装目录")
         if path:
             # 设置Combobox的值为路径
             self.path_var.set(path)
-            if self.validate_path(path):
-                self.status_label.config(text=f"路径有效 ({self.detect_version(path)})", fg="green")
-            else:
-                self.status_label.config(text="路径无效，请检查", fg="red")
+            self.validate_path(path)
             
             # 更新下拉框选项
             common_paths = self.detect_common_paths()
@@ -262,7 +318,7 @@ class LumericalGUI:
         # 验证路径并自动检测版本号
         version = self.detect_version(path)
         if not version:
-            messagebox.showerror("错误", "未找到有效的Lumerical版本")
+            messagebox.showerror("错误", "未找到有效的版本号")
             return
             
         # 保存配置
@@ -273,9 +329,9 @@ class LumericalGUI:
                     'version': version
                 }, f)
             
-            self.status_label.config(text=f"路径已更新并有效 ({version})", fg="green")
+            self.status_label.config(text=f"配置已保存 ({version})", fg="green")
             self.confirm_btn.config(state=tk.DISABLED)
-            messagebox.showinfo("成功", f"路径已更新并验证有效 ({version})")
+            messagebox.showinfo("成功", f"路径已更新并验证有效\n版本: {version}")
             
             # 更新下拉框
             common_paths = self.detect_common_paths()

@@ -7,7 +7,8 @@ import importlib
 import importlib.util
 import re, platform
 
-CONFIG_PATH = 'config.json'
+current_dir = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(current_dir, 'config.json')
 
 def detect_version(lumerical_root):
     """检测Lumerical安装目录下的有效版本号"""
@@ -490,8 +491,8 @@ def RorySommerfeld_Vector(lamb, x_near, y_near, E_near_x, E_near_y, x_far, y_far
 
 
 class LumAPI:
-    def __init__(self, lumerical_path='', version=''):
-        self.config_path = CONFIG_PATH
+    def __init__(self, lumerical_path='', version='', config_path=CONFIG_PATH):
+        self.config_path = config_path
         
         # 如果没有提供路径，尝试从配置文件加载
         if not lumerical_path:

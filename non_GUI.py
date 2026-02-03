@@ -5,8 +5,18 @@ import re
 import platform
 import sys
 
+# --- 修改：配置路径 ---
+# 获取当前脚本所在的绝对目录
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 指向 lumapi 子目录
+LUMAPI_DIR = os.path.join(CURRENT_DIR, "lumapi")
 # 配置文件路径
-CONFIG_PATH = "config.json"
+CONFIG_PATH = os.path.join(LUMAPI_DIR, "config.json")
+
+# 确保目录存在
+if not os.path.exists(LUMAPI_DIR):
+    os.makedirs(LUMAPI_DIR, exist_ok=True)
+# --------------------
 
 def get_lumapi_path(lumerical_root, version):
     """
@@ -29,21 +39,14 @@ def get_lumapi_path(lumerical_root, version):
     return standalone_path
 
 def detect_version(lumerical_root):
-    """
-    检测安装目录下的有效版本号
-    兼容两种结构：
-    1. Standalone: root/v241/api/python/lumapi.py
-    2. Ansys Unified: root/v252/Lumerical/api/python/lumapi.py
-    """
+    """检测安装目录下的有效版本号"""
     try:
         if not os.path.exists(lumerical_root):
             return None
             
-        # 检查是否存在v+三位数字的文件夹
         for item in os.listdir(lumerical_root):
             item_path = os.path.join(lumerical_root, item)
             if os.path.isdir(item_path):
-                # 匹配v+三位数字的模式，例如v231, v242, v252
                 if re.match(r'^v\d{3}$', item):
                     # 使用 get_lumapi_path 逻辑检查文件是否存在
                     lumapi_path = get_lumapi_path(lumerical_root, item)
@@ -58,54 +61,39 @@ def detect_common_paths():
     common_paths = []
     print("正在自动扫描常见安装路径...", end="", flush=True)
     
-    # 检测Windows系统
     if platform.system() == "Windows":
         import string
         from ctypes import windll
-        
-        # 获取所有可用驱动器
         drives = []
         bitmask = windll.kernel32.GetLogicalDrives()
         for letter in string.ascii_uppercase:
-            if bitmask & 1:
-                drives.append(letter + ":\\")
+            if bitmask & 1: drives.append(letter + ":\\")
             bitmask >>= 1
             
-        # 检测每个驱动器的常见路径
         for drive in drives:
             potential_paths = [
-                # 原生 Lumerical 路径
                 os.path.join(drive, "Program Files", "Lumerical"),
                 os.path.join(drive, "Program Files (x86)", "Lumerical"),
                 os.path.join(drive, "Lumerical"),
-                # Ansys Unified Installer 路径
                 os.path.join(drive, "Program Files", "Ansys Inc"),
                 os.path.join(drive, "Program Files (x86)", "Ansys Inc")
             ]
-            
             for path in potential_paths:
                 if os.path.exists(path):
                     version = detect_version(path)
-                    if version:
-                        common_paths.append((path, version))
+                    if version: common_paths.append((path, version))
     
-    # 检测Linux系统
     elif platform.system() == "Linux":
         potential_paths = [
-            "/opt/lumerical",
-            "/usr/local/lumerical",
-            # Ansys Unified Installer Linux 路径
-            "/usr/ansys_inc",
-            "/opt/ansys_inc",
+            "/opt/lumerical", "/usr/local/lumerical",
+            "/usr/ansys_inc", "/opt/ansys_inc",
             os.path.expanduser("~/Ansys/ansys_inc"),
             os.path.expanduser("~/ansys_inc")
         ]
-        
         for path in potential_paths:
             if os.path.exists(path):
                 version = detect_version(path)
-                if version:
-                    common_paths.append((path, version))
+                if version: common_paths.append((path, version))
     
     print(" 完成。")
     return common_paths
@@ -118,38 +106,29 @@ def validate_path(lumerical_root: str) -> tuple:
             return ("", "")
             
         lumerical_root = os.path.abspath(lumerical_root)
-        
-        # 检测版本号
         version = detect_version(lumerical_root)
         if not version:
             print(f"错误：在指定路径未找到有效的Lumerical/Ansys版本 (查找路径：{lumerical_root})")
             return ("", "")
             
-        # 获取API路径（自动适配Ansys结构）
         lumapi_path = get_lumapi_path(lumerical_root, version)
-        
         if not os.path.exists(lumapi_path):
             print(f"错误：在指定路径未找到 lumapi.py 文件（查找路径：{lumapi_path}）")
             return ("", "")
             
-        # 测试导入
         spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
         lumapi = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(lumapi)
         
-        # 测试通过后添加 DLL 目录 (Windows特有)
         if platform.system() == "Windows":
-            # 注意：对于Ansys版本，DLL可能在 bin 目录下，这里简单添加根目录和bin目录
             os.add_dll_directory(lumerical_root)
             bin_path = os.path.join(lumerical_root, version, "bin") # Standalone
             if not os.path.exists(bin_path):
                 bin_path = os.path.join(lumerical_root, version, "Lumerical", "bin") # Ansys
-            
             if os.path.exists(bin_path):
                 os.add_dll_directory(bin_path)
         
         return (lumapi_path, version)
-        
     except Exception as e:
         print(f"错误：路径验证失败 - {str(e)}")
         return ("", "")
@@ -163,7 +142,6 @@ def load_config():
                 lumerical_path = config.get('lumerical_path')
                 version = config.get('version')
                 if lumerical_path and version:
-                    # 使用新的路径获取逻辑
                     lumapi_path = get_lumapi_path(lumerical_path, version)
                     if os.path.exists(lumapi_path):
                         return (lumerical_path, version)
@@ -172,14 +150,18 @@ def load_config():
     return (None, None)
 
 def save_config(lumerical_path: str, version: str):
-    """保存配置文件"""
+    """保存配置文件到 lumapi/config.json"""
     try:
+        # 确保目录存在
+        if not os.path.exists(LUMAPI_DIR):
+            os.makedirs(LUMAPI_DIR, exist_ok=True)
+
         with open(CONFIG_PATH, 'w') as f:
             json.dump({
                 'lumerical_path': os.path.abspath(lumerical_path),
                 'version': version
-            }, f)
-        print("配置已保存。")
+            }, f, indent=4)
+        print(f"配置已保存至: {CONFIG_PATH}")
         return True
     except Exception as e:
         print(f"错误：配置文件保存失败 - {str(e)}")
@@ -189,7 +171,6 @@ def select_from_detected(detected_paths):
     """从检测到的路径中选择"""
     print("\n检测到以下安装路径：")
     for i, (path, version) in enumerate(detected_paths):
-        # 简单判断类型用于显示
         type_str = "Ansys Unified" if "Ansys" in path or "ansys" in path else "Standalone"
         print(f"{i + 1}. {path} (版本: {version}, 类型: {type_str})")
     print(f"{len(detected_paths) + 1}. 手动输入路径")
@@ -201,7 +182,7 @@ def select_from_detected(detected_paths):
             if 1 <= choice <= len(detected_paths):
                 return detected_paths[choice - 1]
             elif choice == len(detected_paths) + 1:
-                return None  # 手动输入
+                return None
             elif choice == len(detected_paths) + 2:
                 sys.exit()
             else:
@@ -210,18 +191,13 @@ def select_from_detected(detected_paths):
             print("请输入数字。")
 
 def get_user_input():
-    """获取用户输入并处理（支持自动检测）"""
-    # 1. 先尝试自动检测
+    """获取用户输入并处理"""
     detected_paths = detect_common_paths()
     
-    selected_path = None
-    selected_version = None
-
     if detected_paths:
         result = select_from_detected(detected_paths)
         if result:
             selected_path, selected_version = result
-            # 既然是检测出来的，路径通常是正确的，但为了保险还是validate一下
             print(f"\n正在验证选择的路径: {selected_path}...")
             lumapi_path, version = validate_path(selected_path)
             if lumapi_path and version:
@@ -230,10 +206,8 @@ def get_user_input():
     else:
         print("未自动检测到常见安装路径。")
 
-    # 2. 如果没检测到或者用户选择手动输入
     while True:
         lumerical_root = input("\n请输入 Lumerical/Ansys 根目录路径（输入 q 退出）: ").strip()
-        
         if lumerical_root.lower() in ['q', 'quit']:
             print("操作已取消")
             sys.exit()
@@ -257,7 +231,6 @@ def load_lumapi(lumerical_path: str, version: str):
 def main():
     print("=== Lumerical Python API 配置工具 ===")
     
-    # 1. 尝试加载配置文件
     config_lumerical_path, config_version = load_config()
     
     if config_lumerical_path and config_version:
@@ -273,17 +246,15 @@ def main():
             while True:
                 choice = input("请输入选项 (1-3): ").strip()
                 if choice == '1':
-                    # 重新做一次完整验证以确保环境（如DLL）被正确加载
                     validate_path(config_lumerical_path) 
                     return load_lumapi(config_lumerical_path, config_version)
                 elif choice == '2':
-                    break # 跳出到重新配置流程
+                    break 
                 elif choice == '3':
                     sys.exit()
         else:
             print("配置状态：无效 (文件不存在)")
     
-    # 2. 如果没有有效配置，或用户选择重新配置，进入路径获取流程
     print("\n--- 开始配置新路径 ---")
     lumerical_path, version = get_user_input()
     return load_lumapi(lumerical_path, version)

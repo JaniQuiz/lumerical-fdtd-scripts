@@ -5,43 +5,39 @@ import re
 import platform
 import sys
 import shutil
+import subprocess
 
-# --- 核心修改：路径处理逻辑 ---
-# 1. 确定基准路径 (处理 PyInstaller 打包后的临时目录)
+# --- 路径处理逻辑 ---
 if getattr(sys, 'frozen', False):
-    # EXE模式：资源在临时目录 _MEIPASS
     BASE_DIR = sys._MEIPASS 
-    # 导出目标：EXE 所在目录
     OUTPUT_DIR = os.path.dirname(sys.executable)
 else:
-    # 脚本模式：资源在当前脚本目录
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     OUTPUT_DIR = BASE_DIR
 
-# 内部 lumapi 文件夹路径 (读取模板 lumapi.py 和写入 config.json 的地方)
 LUMAPI_DIR = os.path.join(BASE_DIR, "lumapi")
 CONFIG_PATH = os.path.join(LUMAPI_DIR, "config.json")
+INIT_PATH = os.path.join(LUMAPI_DIR, "__init__.py")
 
-# 确保内部目录存在 (脚本模式下如果不存在则创建)
 if not getattr(sys, 'frozen', False) and not os.path.exists(LUMAPI_DIR):
     os.makedirs(LUMAPI_DIR, exist_ok=True)
+
+# 确保 __init__.py 存在
+if not os.path.exists(INIT_PATH):
+    try:
+        with open(INIT_PATH, 'w') as f: f.write("from lumapi.lumapi import *\n")
+    except: pass
 # ---------------------------
 
 def get_lumapi_path(lumerical_root, version):
-    """根据根路径和版本获取lumapi.py路径"""
     base_path = os.path.join(lumerical_root, version)
-    # Ansys Unified
     ansys_path = os.path.join(base_path, "Lumerical", "api", "python", "lumapi.py")
-    if os.path.exists(ansys_path):
-        return ansys_path
-    # Standalone
+    if os.path.exists(ansys_path): return ansys_path
     standalone_path = os.path.join(base_path, "api", "python", "lumapi.py")
-    if os.path.exists(standalone_path):
-        return standalone_path
+    if os.path.exists(standalone_path): return standalone_path
     return standalone_path
 
 def detect_version(lumerical_root):
-    """检测版本号"""
     try:
         if not os.path.exists(lumerical_root): return None
         for item in os.listdir(lumerical_root):
@@ -50,13 +46,11 @@ def detect_version(lumerical_root):
                 if os.path.exists(get_lumapi_path(lumerical_root, item)):
                     return item
         return None
-    except Exception: return None
+    except: return None
 
 def detect_common_paths():
-    """自动扫描路径"""
+    print("正在扫描 Lumerical 路径...", end="", flush=True)
     common_paths = []
-    print("正在自动扫描常见安装路径...", end="", flush=True)
-    
     if platform.system() == "Windows":
         import string
         from ctypes import windll
@@ -77,7 +71,6 @@ def detect_common_paths():
                 if os.path.exists(p):
                     v = detect_version(p)
                     if v: common_paths.append((p, v))
-                    
     elif platform.system() == "Linux":
         paths = [
             "/opt/lumerical", "/usr/local/lumerical",
@@ -88,12 +81,10 @@ def detect_common_paths():
             if os.path.exists(p):
                 v = detect_version(p)
                 if v: common_paths.append((p, v))
-                
     print(" 完成。")
     return common_paths
 
 def validate_path(lumerical_root):
-    """验证路径并加载环境"""
     try:
         if not lumerical_root: return "", ""
         lumerical_root = os.path.abspath(lumerical_root)
@@ -101,18 +92,13 @@ def validate_path(lumerical_root):
         if not version:
             print(f"错误：未找到有效版本 (在 {lumerical_root})")
             return "", ""
-            
         lumapi_path = get_lumapi_path(lumerical_root, version)
-        if not os.path.exists(lumapi_path):
-            print(f"错误：API文件不存在")
-            return "", ""
-            
-        # 测试加载
+        if not os.path.exists(lumapi_path): return "", ""
+        
         spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
         lumapi = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(lumapi)
         
-        # Windows DLL 配置
         if platform.system() == "Windows":
             os.add_dll_directory(lumerical_root)
             bin_path = os.path.join(lumerical_root, version, "bin")
@@ -120,14 +106,125 @@ def validate_path(lumerical_root):
                 bin_path = os.path.join(lumerical_root, version, "Lumerical", "bin")
             if os.path.exists(bin_path):
                 os.add_dll_directory(bin_path)
-        
         return lumapi_path, version
     except Exception as e:
         print(f"验证失败: {e}")
         return "", ""
 
+def save_config(lumerical_path, version):
+    try:
+        if not getattr(sys, 'frozen', False) and not os.path.exists(LUMAPI_DIR):
+            os.makedirs(LUMAPI_DIR, exist_ok=True)
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump({'lumerical_path': os.path.abspath(lumerical_path), 'version': version}, f, indent=4)
+        print(f"[成功] 配置已保存。")
+        return True
+    except Exception as e:
+        print(f"[错误] 保存失败: {e}")
+        return False
+
+# ================= Python 环境相关函数 =================
+
+def detect_python_interpreters():
+    """扫描本地 Python 环境"""
+    print("正在扫描 Python 环境...", end="", flush=True)
+    interpreters = set()
+    
+    # 扫描 PATH
+    paths = os.environ.get("PATH", "").split(os.pathsep)
+    for p in paths:
+        exe = "python.exe" if platform.system() == "Windows" else "python3"
+        full = os.path.join(p, exe)
+        if os.path.exists(full) and os.access(full, os.X_OK):
+            interpreters.add(full)
+            
+    # 常见目录
+    if platform.system() == "Windows":
+        user_profile = os.environ.get("USERPROFILE", "")
+        roots = [os.path.join(user_profile, "anaconda3"), "C:\\ProgramData\\Anaconda3"]
+        for r in roots:
+            if os.path.exists(os.path.join(r, "python.exe")):
+                interpreters.add(os.path.join(r, "python.exe"))
+    
+    interpreters.add(sys.executable)
+    print(" 完成。")
+    return sorted(list(interpreters))
+
+def get_site_packages(python_exe):
+    try:
+        cmd = [python_exe, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"]
+        if platform.system() == "Windows":
+             startupinfo = subprocess.STARTUPINFO()
+             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+             result = subprocess.check_output(cmd, startupinfo=startupinfo, encoding='utf-8')
+        else:
+             result = subprocess.check_output(cmd, encoding='utf-8')
+        return result.strip()
+    except: return None
+
+def install_to_python_env():
+    # 1. 检查配置是否就绪
+    if not os.path.exists(CONFIG_PATH):
+        print("[错误] 必须先配置 Lumerical 路径才能执行此操作。")
+        return
+
+    # 2. 选择 Python 环境
+    interpreters = detect_python_interpreters()
+    print("\n请选择目标 Python 环境:")
+    for i, path in enumerate(interpreters):
+        print(f"{i+1}. {path}")
+    print(f"{len(interpreters)+1}. 手动输入路径")
+    print(f"{len(interpreters)+2}. 返回")
+    
+    try:
+        sel = int(input("选择: "))
+        if 1 <= sel <= len(interpreters):
+            python_exe = interpreters[sel-1]
+        elif sel == len(interpreters) + 1:
+            python_exe = input("请输入 python 可执行文件完整路径: ").strip()
+        else:
+            return
+    except: return
+
+    if not os.path.exists(python_exe):
+        print("[错误] 路径不存在")
+        return
+
+    # 3. 获取库路径并安装
+    print(f"正在获取库路径 ({python_exe})...")
+    lib_path = get_site_packages(python_exe)
+    if not lib_path:
+        print("[错误] 无法获取 site-packages 路径")
+        return
+
+    target_dir = os.path.join(lib_path, "lumapi")
+    print(f"目标安装路径: {target_dir}")
+    
+    if os.path.exists(target_dir):
+        choice = input("检测到目录已存在，是否覆盖? (y/n): ").lower()
+        if choice != 'y':
+            print("操作已取消")
+            return
+
+    try:
+        if not os.path.exists(target_dir): os.makedirs(target_dir)
+        files = ["__init__.py", "lumapi.py", "config.json"]
+        for f in files:
+            src = os.path.join(LUMAPI_DIR, f)
+            dst = os.path.join(target_dir, f)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+            elif f == "__init__.py":
+                 with open(dst, 'w') as f_obj: f_obj.write("from lumapi.lumapi import *\n")
+        
+        print(f"\n[成功] 已安装到 {target_dir}")
+        print("您现在可以在该 Python 环境中使用 'import lumapi'")
+    except Exception as e:
+        print(f"[错误] 安装失败: {e}")
+
+# ================= 主流程 =================
+
 def load_config():
-    """读取配置"""
     try:
         if os.path.exists(CONFIG_PATH):
             with open(CONFIG_PATH, 'r') as f:
@@ -136,50 +233,17 @@ def load_config():
     except: pass
     return None, None
 
-def save_config(lumerical_path, version):
-    """保存配置到内部目录"""
+def export_files_local():
+    if not os.path.exists(CONFIG_PATH):
+        print("[错误] 无有效配置")
+        return
     try:
-        # 脚本模式下需确保目录存在
-        if not getattr(sys, 'frozen', False) and not os.path.exists(LUMAPI_DIR):
-            os.makedirs(LUMAPI_DIR, exist_ok=True)
-
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump({'lumerical_path': os.path.abspath(lumerical_path), 'version': version}, f, indent=4)
-        print(f"\n[成功] 配置已保存至内部存储。")
-        return True
-    except Exception as e:
-        print(f"[错误] 保存失败: {e}")
-        return False
-
-def export_files():
-    """导出功能：将内部 lumapi.py 和 config.json 复制到 EXE 目录"""
-    print(f"\n正在导出接口文件...")
-    try:
-        src_script = os.path.join(LUMAPI_DIR, "lumapi.py")
-        src_config = CONFIG_PATH
-        
-        if not os.path.exists(src_script):
-            print(f"[错误] 源文件丢失: {src_script}")
-            print("请检查是否正确打包了 lumapi 文件夹。")
-            return
-        if not os.path.exists(src_config):
-            print("[错误] 配置文件未找到，请先进行路径配置。")
-            return
-
-        dst_script = os.path.join(OUTPUT_DIR, "lumapi.py")
-        dst_config = os.path.join(OUTPUT_DIR, "config.json")
-        
-        shutil.copy2(src_script, dst_script)
-        shutil.copy2(src_config, dst_config)
-        
+        shutil.copy2(os.path.join(LUMAPI_DIR, "lumapi.py"), os.path.join(OUTPUT_DIR, "lumapi.py"))
+        shutil.copy2(CONFIG_PATH, os.path.join(OUTPUT_DIR, "config.json"))
         print(f"[成功] 文件已导出到: {OUTPUT_DIR}")
-        print("  1. lumapi.py")
-        print("  2. config.json")
-    except Exception as e:
-        print(f"[错误] 导出失败: {str(e)}")
+    except Exception as e: print(f"[错误] {e}")
 
 def load_lumapi(lumerical_path, version):
-    """加载模块并返回"""
     lumapi_path = get_lumapi_path(lumerical_path, version)
     spec = importlib.util.spec_from_file_location('lumapi', lumapi_path)
     lumapi = importlib.util.module_from_spec(spec)
@@ -188,39 +252,27 @@ def load_lumapi(lumerical_path, version):
     return lumapi
 
 def perform_configuration():
-    """执行配置流程"""
     detected = detect_common_paths()
     if detected:
         print("\n检测到以下路径:")
         for i, (p, v) in enumerate(detected):
-            t = "Ansys Unified" if "Ansys" in p or "ansys" in p else "Standalone"
-            print(f"{i+1}. {p} (版本: {v}, {t})")
+            print(f"{i+1}. {p} ({v})")
         print(f"{len(detected)+1}. 手动输入")
-        print(f"{len(detected)+2}. 返回主菜单")
-        
         try:
-            sel = int(input("请选择: "))
+            sel = int(input("选择: "))
             if 1 <= sel <= len(detected):
                 path, ver = detected[sel-1]
                 if validate_path(path)[0]:
                     save_config(path, ver)
                 return
-            elif sel == len(detected) + 2:
-                return
-        except ValueError: pass
+        except: pass
 
-    while True:
-        path = input("\n请输入安装根目录 (输入 q 返回): ").strip()
-        if path.lower() in ['q', 'quit']: return
-        
-        p_valid, v_valid = validate_path(path)
-        if p_valid:
-            save_config(path, v_valid)
-            return
+    path = input("\n请输入安装根目录: ").strip()
+    p_valid, v_valid = validate_path(path)
+    if p_valid: save_config(path, v_valid)
 
 def main():
     print("=== Lumerical Python API 配置工具 (CLI) ===")
-    print(f"工作目录: {OUTPUT_DIR}")
     
     while True:
         cfg_path, cfg_ver = load_config()
@@ -229,39 +281,27 @@ def main():
         print("\n-------------------------")
         if has_config:
             print(f"当前配置: {cfg_path} ({cfg_ver})")
-            print("1. [启动] 加载此环境")
-            print("2. [导出] 导出接口文件 (lumapi.py + config.json)")
-            print("3. [重置] 重新配置路径")
-            print("4. [退出] 退出程序")
+            print("1. [启动] 测试加载环境")
+            print("2. [导出] 导出到当前目录")
+            print("3. [安装] 安装到 Python 环境 (site-packages)")
+            print("4. [重置] 重新配置路径")
+            print("5. [退出] 退出")
         else:
             print("当前状态: 未配置")
             print("1. [配置] 开始配置新路径")
-            print("2. [退出] 退出程序")
+            print("2. [退出] 退出")
             
-        choice = input("\n请输入选项: ").strip()
+        choice = input("\n选项: ").strip()
         
         if has_config:
-            if choice == '1':
-                # 加载环境并返回 API 对象 (如果是作为模块调用)
-                # 同时也为了验证环境是否真正可用
-                validate_path(cfg_path)
-                return load_lumapi(cfg_path, cfg_ver)
-            elif choice == '2':
-                export_files()
-                input("\n按回车键继续...")
-            elif choice == '3':
-                perform_configuration()
-            elif choice == '4':
-                sys.exit()
-            else:
-                print("无效选项")
+            if choice == '1': validate_path(cfg_path); load_lumapi(cfg_path, cfg_ver)
+            elif choice == '2': export_files_local()
+            elif choice == '3': install_to_python_env()
+            elif choice == '4': perform_configuration()
+            elif choice == '5': sys.exit()
         else:
-            if choice == '1':
-                perform_configuration()
-            elif choice == '2':
-                sys.exit()
-            else:
-                print("无效选项")
+            if choice == '1': perform_configuration()
+            elif choice == '2': sys.exit()
 
 if __name__ == "__main__":
     main()

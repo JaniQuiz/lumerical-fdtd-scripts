@@ -1,13 +1,13 @@
 name: Build and Release Lumerical Tools
 
-permissions:
-  contents: write
-
 on:
   push:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   # 任务1: 构建 Windows 和 Linux (AMD64) 版本
@@ -23,13 +23,11 @@ jobs:
             target_name: windows-amd64
             sep: ';'
             ext: .exe
-            artifact_type: exe
           - os: ubuntu-latest
             arch: amd64
             target_name: linux-amd64
             sep: ':'
             ext: ''
-            artifact_type: tar
 
     steps:
       - name: Checkout code
@@ -52,7 +50,7 @@ jobs:
           mkdir -p lumapi
           # 创建空的 config.json (写入 {} 以防 json.load 报错)
           echo "{}" > lumapi/config.json
-          # 确保 __init__.py 和 lumapi.py 存在 (假设仓库里已经有了，这里再次确认结构)
+          # 确保 __init__.py 和 lumapi.py 存在
           ls -R lumapi
 
       - name: Build GUI with PyInstaller
@@ -97,17 +95,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Build inside Docker (ARM64)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.build  # 我们将在下一步动态创建这个文件
-          platforms: linux/arm64
-          push: false
-          load: true
-          tags: lumapi-builder:latest
-      
-      # 这是一个技巧：动态生成 Dockerfile 来执行构建，无需在仓库中实际存放 Dockerfile
+      # [修复] 必须先创建 Dockerfile，然后再执行构建
       - name: Create Dockerfile for Build
         run: |
           cat <<EOF > Dockerfile.build
@@ -123,11 +111,19 @@ jobs:
           RUN tar -czvf /app/non_GUI-linux-arm64.tar.gz -C /app/dist non_GUI-linux-arm64
           EOF
 
-      - name: Run Build Container and Extract Artifacts
+      - name: Build inside Docker (ARM64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.build
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: lumapi-builder:latest
+
+      - name: Extract Artifacts
         run: |
-          # 构建 Docker 镜像
-          docker buildx build --platform linux/arm64 -t lumapi-builder -f Dockerfile.build --load .
-          # 创建容器
+          # 创建容器用于复制文件
           id=$(docker create --platform linux/arm64 lumapi-builder)
           # 复制出来
           docker cp $id:/app/GUI-linux-arm64.tar.gz .
@@ -138,7 +134,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-archives
-          path: *.tar.gz
+          # [修复] 这里的 *.tar.gz 必须加引号，否则是 YAML 语法错误
+          path: '*.tar.gz'
 
   # 任务3: 发布 Release
   release:
@@ -168,7 +165,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            assets/*
+          # 使用通配符匹配 assets 目录下的所有文件
+          files: assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

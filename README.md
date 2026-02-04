@@ -12,7 +12,7 @@
 ## 🚀 快速开始
 
 ### 1. 获取程序
-请前往 [Releases 页面](releases) 下载适配您操作系统（Windows/Linux）及架构（AMD64/ARM64）的预编译程序。
+请前往 [Releases 页面](releases) 下载适配您操作系统（Windows/Linux）及架构（AMD64/ARM64）的预编译程序。`LumAPI_GUI`为带图形界面版本的配置程序，`LumAPI_CLI`为无图形界面版本的命令行配置工具，二者选择其一即可。
 
 ### 2. 初始化配置
 运行下载的配置工具（`LumAPI_GUI` 或 `LumAPI_CLI`），完成 Lumerical API 的路径挂载：

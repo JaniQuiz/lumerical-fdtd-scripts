@@ -14,6 +14,12 @@ jobs:
   build-standard:
     name: Build ${{ matrix.os }} (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
+    
+    # [关键修复] 强制 Windows 使用 Bash，解决 PowerShell 换行符报错问题
+    defaults:
+      run:
+        shell: bash
+
     strategy:
       fail-fast: false
       matrix:
@@ -44,31 +50,26 @@ jobs:
           pip install -r requirements.txt
 
       - name: Prepare Config and Init Files
-        shell: bash
         run: |
           mkdir -p lumapi
           echo "{}" > lumapi/config.json
           ls -R lumapi
 
-      # GUI 程序：
-      # 1. 保留 --noconsole (不显示黑框)
-      # 2. [新增] --hidden-import numpy (解决验证失败问题)
-      - name: Build GUI with PyInstaller
+      # GUI 程序 -> 重命名为 LumAPI-Config
+      - name: Build GUI (LumAPI-Config)
         run: |
           pyinstaller --noconsole --onefile --clean \
-            --name GUI-${{ matrix.target_name }}${{ matrix.ext }} \
+            --name LumAPI-Config-${{ matrix.target_name }}${{ matrix.ext }} \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi${{ matrix.sep }}lumapi" \
             GUI.py
 
-      # non_GUI 程序：
-      # 1. 去掉 --noconsole (解决 lost sys.stdin 报错)
-      # 2. [新增] --hidden-import numpy (解决验证失败问题)
-      - name: Build non_GUI with PyInstaller
+      # non_GUI 程序 -> 重命名为 LumAPI-CLI
+      - name: Build CLI (LumAPI-CLI)
         run: |
           pyinstaller --onefile --clean \
-            --name non_GUI-${{ matrix.target_name }}${{ matrix.ext }} \
+            --name LumAPI-CLI-${{ matrix.target_name }}${{ matrix.ext }} \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi${{ matrix.sep }}lumapi" \
@@ -85,8 +86,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd dist
-          tar -czvf GUI-${{ matrix.target_name }}.tar.gz GUI-${{ matrix.target_name }}
-          tar -czvf non_GUI-${{ matrix.target_name }}.tar.gz non_GUI-${{ matrix.target_name }}
+          tar -czvf LumAPI-Config-${{ matrix.target_name }}.tar.gz LumAPI-Config-${{ matrix.target_name }}
+          tar -czvf LumAPI-CLI-${{ matrix.target_name }}.tar.gz LumAPI-CLI-${{ matrix.target_name }}
       
       - name: Upload Artifacts (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -116,24 +117,24 @@ jobs:
           RUN pip install --no-cache-dir -r requirements.txt
           RUN mkdir -p lumapi && echo "{}" > lumapi/config.json
           
-          # GUI: 增加 hidden-import
+          # GUI -> LumAPI-Config
           RUN pyinstaller --noconsole --onefile --clean \
-            --name GUI-linux-arm64 \
+            --name LumAPI-Config-linux-arm64 \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             GUI.py
             
-          # non_GUI: 增加 hidden-import 并确保有控制台
+          # non_GUI -> LumAPI-CLI
           RUN pyinstaller --onefile --clean \
-            --name non_GUI-linux-arm64 \
+            --name LumAPI-CLI-linux-arm64 \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             non_GUI.py
             
-          RUN tar -czvf /app/GUI-linux-arm64.tar.gz -C /app/dist GUI-linux-arm64
-          RUN tar -czvf /app/non_GUI-linux-arm64.tar.gz -C /app/dist non_GUI-linux-arm64
+          RUN tar -czvf /app/LumAPI-Config-linux-arm64.tar.gz -C /app/dist LumAPI-Config-linux-arm64
+          RUN tar -czvf /app/LumAPI-CLI-linux-arm64.tar.gz -C /app/dist LumAPI-CLI-linux-arm64
           EOF
 
       - name: Build inside Docker (ARM64)
@@ -149,8 +150,8 @@ jobs:
       - name: Extract Artifacts
         run: |
           id=$(docker create --platform linux/arm64 lumapi-builder)
-          docker cp $id:/app/GUI-linux-arm64.tar.gz .
-          docker cp $id:/app/non_GUI-linux-arm64.tar.gz .
+          docker cp $id:/app/LumAPI-Config-linux-arm64.tar.gz .
+          docker cp $id:/app/LumAPI-CLI-linux-arm64.tar.gz .
           docker rm -v $id
 
       - name: Upload Artifacts (ARM64)

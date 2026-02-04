@@ -15,7 +15,7 @@ jobs:
     name: Build ${{ matrix.os }} (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     
-    # [关键修复] 强制 Windows 使用 Bash，解决 PowerShell 换行符报错问题
+    # 强制 Windows 使用 Bash，解决 PowerShell 换行符报错
     defaults:
       run:
         shell: bash
@@ -55,21 +55,21 @@ jobs:
           echo "{}" > lumapi/config.json
           ls -R lumapi
 
-      # GUI 程序 -> 重命名为 LumAPI-Config
-      - name: Build GUI (LumAPI-Config)
+      # GUI 程序 -> 重命名为 LumAPI_GUI
+      - name: Build GUI (LumAPI_GUI)
         run: |
           pyinstaller --noconsole --onefile --clean \
-            --name LumAPI-Config-${{ matrix.target_name }}${{ matrix.ext }} \
+            --name LumAPI_GUI-${{ matrix.target_name }}${{ matrix.ext }} \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi${{ matrix.sep }}lumapi" \
             GUI.py
 
-      # non_GUI 程序 -> 重命名为 LumAPI-CLI
-      - name: Build CLI (LumAPI-CLI)
+      # non_GUI 程序 -> 重命名为 LumAPI_CLI
+      - name: Build CLI (LumAPI_CLI)
         run: |
           pyinstaller --onefile --clean \
-            --name LumAPI-CLI-${{ matrix.target_name }}${{ matrix.ext }} \
+            --name LumAPI_CLI-${{ matrix.target_name }}${{ matrix.ext }} \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi${{ matrix.sep }}lumapi" \
@@ -86,8 +86,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd dist
-          tar -czvf LumAPI-Config-${{ matrix.target_name }}.tar.gz LumAPI-Config-${{ matrix.target_name }}
-          tar -czvf LumAPI-CLI-${{ matrix.target_name }}.tar.gz LumAPI-CLI-${{ matrix.target_name }}
+          tar -czvf LumAPI_GUI-${{ matrix.target_name }}.tar.gz LumAPI_GUI-${{ matrix.target_name }}
+          tar -czvf LumAPI_CLI-${{ matrix.target_name }}.tar.gz LumAPI_CLI-${{ matrix.target_name }}
       
       - name: Upload Artifacts (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -117,24 +117,24 @@ jobs:
           RUN pip install --no-cache-dir -r requirements.txt
           RUN mkdir -p lumapi && echo "{}" > lumapi/config.json
           
-          # GUI -> LumAPI-Config
+          # GUI -> LumAPI_GUI
           RUN pyinstaller --noconsole --onefile --clean \
-            --name LumAPI-Config-linux-arm64 \
+            --name LumAPI_GUI-linux-arm64 \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             GUI.py
             
-          # non_GUI -> LumAPI-CLI
+          # non_GUI -> LumAPI_CLI
           RUN pyinstaller --onefile --clean \
-            --name LumAPI-CLI-linux-arm64 \
+            --name LumAPI_CLI-linux-arm64 \
             --hidden-import numpy \
             --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             non_GUI.py
             
-          RUN tar -czvf /app/LumAPI-Config-linux-arm64.tar.gz -C /app/dist LumAPI-Config-linux-arm64
-          RUN tar -czvf /app/LumAPI-CLI-linux-arm64.tar.gz -C /app/dist LumAPI-CLI-linux-arm64
+          RUN tar -czvf /app/LumAPI_GUI-linux-arm64.tar.gz -C /app/dist LumAPI_GUI-linux-arm64
+          RUN tar -czvf /app/LumAPI_CLI-linux-arm64.tar.gz -C /app/dist LumAPI_CLI-linux-arm64
           EOF
 
       - name: Build inside Docker (ARM64)
@@ -150,8 +150,8 @@ jobs:
       - name: Extract Artifacts
         run: |
           id=$(docker create --platform linux/arm64 lumapi-builder)
-          docker cp $id:/app/LumAPI-Config-linux-arm64.tar.gz .
-          docker cp $id:/app/LumAPI-CLI-linux-arm64.tar.gz .
+          docker cp $id:/app/LumAPI_GUI-linux-arm64.tar.gz .
+          docker cp $id:/app/LumAPI_CLI-linux-arm64.tar.gz .
           docker rm -v $id
 
       - name: Upload Artifacts (ARM64)

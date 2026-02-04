@@ -61,7 +61,7 @@ jobs:
           pyinstaller --noconsole --onefile --clean \
             --name LumAPI_GUI-${{ matrix.target_name }}${{ matrix.ext }} \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            # --hidden-import matplotlib \
             --add-data "lumapi${{ matrix.sep }}lumapi" \
             GUI.py
 
@@ -71,7 +71,7 @@ jobs:
           pyinstaller --onefile --clean \
             --name LumAPI_CLI-${{ matrix.target_name }}${{ matrix.ext }} \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            # --hidden-import matplotlib \
             --add-data "lumapi${{ matrix.sep }}lumapi" \
             non_GUI.py
 
@@ -121,7 +121,7 @@ jobs:
           RUN pyinstaller --noconsole --onefile --clean \
             --name LumAPI_GUI-linux-arm64 \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            # --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             GUI.py
             
@@ -129,7 +129,7 @@ jobs:
           RUN pyinstaller --onefile --clean \
             --name LumAPI_CLI-linux-arm64 \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            # --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             non_GUI.py
             

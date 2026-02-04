@@ -13,9 +13,9 @@ jobs:
   # 任务1: 构建 Windows 和 Linux (AMD64) 版本
   build-standard:
     name: Build ${{ matrix.os }} (${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
+    # [修改点 1] 动态选择 runner，如果是 Linux 则强制使用旧版 ubuntu-20.04 以保证兼容性
+    runs-on: ${{ matrix.runner }}
     
-    # 强制 Windows 使用 Bash，解决 PowerShell 换行符报错
     defaults:
       run:
         shell: bash
@@ -24,14 +24,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows
             arch: amd64
             target_name: windows-amd64
+            # Windows 使用 latest 即可
+            runner: windows-latest
             sep: ';'
             ext: .exe
-          - os: ubuntu-latest
+          - os: linux
             arch: amd64
             target_name: linux-amd64
+            # [关键修改] 使用 ubuntu-20.04 (GLIBC 2.31) 而不是 ubuntu-latest (GLIBC 2.38+)
+            # 这样编译出的程序可以在 Ubuntu 20.04/22.04/24.04 等大多数系统上运行
+            runner: ubuntu-20.04
             sep: ':'
             ext: ''
 
@@ -55,7 +60,6 @@ jobs:
           echo "{}" > lumapi/config.json
           ls -R lumapi
 
-      # GUI 程序 -> 重命名为 LumAPI_GUI
       - name: Build GUI (LumAPI_GUI)
         run: |
           pyinstaller --noconsole --onefile --clean \
@@ -64,7 +68,6 @@ jobs:
             --add-data "lumapi${{ matrix.sep }}lumapi" \
             GUI.py
 
-      # non_GUI 程序 -> 重命名为 LumAPI_CLI
       - name: Build CLI (LumAPI_CLI)
         run: |
           pyinstaller --onefile --clean \
@@ -74,21 +77,21 @@ jobs:
             non_GUI.py
 
       - name: Upload Artifacts (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target_name }}-binaries
           path: dist/*.exe
 
       - name: Package and Upload (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'linux'
         run: |
           cd dist
           tar -czvf LumAPI_GUI-${{ matrix.target_name }}.tar.gz LumAPI_GUI-${{ matrix.target_name }}
           tar -czvf LumAPI_CLI-${{ matrix.target_name }}.tar.gz LumAPI_CLI-${{ matrix.target_name }}
       
       - name: Upload Artifacts (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'linux'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target_name }}-archives
@@ -108,7 +111,8 @@ jobs:
       - name: Create Dockerfile for Build
         run: |
           cat <<EOF > Dockerfile.build
-          FROM python:3.11-slim
+          # [关键修改] 使用 slim-bullseye (Debian 11) 以获得更好的 GLIBC 兼容性
+          FROM python:3.11-slim-bullseye
           WORKDIR /app
           COPY . /app
           RUN apt-get update && apt-get install -y binutils && rm -rf /var/lib/apt/lists/*

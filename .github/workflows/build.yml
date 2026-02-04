@@ -1,0 +1,174 @@
+name: Build and Release Lumerical Tools
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  # 任务1: 构建 Windows 和 Linux (AMD64) 版本
+  build-standard:
+    name: Build ${{ matrix.os }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+            target_name: windows-amd64
+            sep: ';'
+            ext: .exe
+            artifact_type: exe
+          - os: ubuntu-latest
+            arch: amd64
+            target_name: linux-amd64
+            sep: ':'
+            ext: ''
+            artifact_type: tar
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Prepare Config and Init Files
+        shell: bash
+        run: |
+          # 确保 lumapi 目录存在
+          mkdir -p lumapi
+          # 创建空的 config.json (写入 {} 以防 json.load 报错)
+          echo "{}" > lumapi/config.json
+          # 确保 __init__.py 和 lumapi.py 存在 (假设仓库里已经有了，这里再次确认结构)
+          ls -R lumapi
+
+      - name: Build GUI with PyInstaller
+        run: |
+          pyinstaller --noconsole --onefile --clean --name GUI-${{ matrix.target_name }}${{ matrix.ext }} --add-data "lumapi${{ matrix.sep }}lumapi" GUI.py
+
+      - name: Build non_GUI with PyInstaller
+        run: |
+          pyinstaller --noconsole --onefile --clean --name non_GUI-${{ matrix.target_name }}${{ matrix.ext }} --add-data "lumapi${{ matrix.sep }}lumapi" non_GUI.py
+
+      # Windows: 直接上传 exe
+      - name: Upload Artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target_name }}-binaries
+          path: dist/*.exe
+
+      # Linux: 打包成 tar.gz 以保留权限
+      - name: Package and Upload (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd dist
+          tar -czvf GUI-${{ matrix.target_name }}.tar.gz GUI-${{ matrix.target_name }}
+          tar -czvf non_GUI-${{ matrix.target_name }}.tar.gz non_GUI-${{ matrix.target_name }}
+      
+      - name: Upload Artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target_name }}-archives
+          path: dist/*.tar.gz
+
+  # 任务2: 构建 Linux (ARM64) 版本 - 使用 QEMU
+  build-arm64:
+    name: Build Linux (arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build inside Docker (ARM64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.build  # 我们将在下一步动态创建这个文件
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: lumapi-builder:latest
+      
+      # 这是一个技巧：动态生成 Dockerfile 来执行构建，无需在仓库中实际存放 Dockerfile
+      - name: Create Dockerfile for Build
+        run: |
+          cat <<EOF > Dockerfile.build
+          FROM python:3.11-slim
+          WORKDIR /app
+          COPY . /app
+          RUN apt-get update && apt-get install -y binutils && rm -rf /var/lib/apt/lists/*
+          RUN pip install --no-cache-dir -r requirements.txt
+          RUN mkdir -p lumapi && echo "{}" > lumapi/config.json
+          RUN pyinstaller --noconsole --onefile --clean --name GUI-linux-arm64 --add-data "lumapi:lumapi" GUI.py
+          RUN pyinstaller --noconsole --onefile --clean --name non_GUI-linux-arm64 --add-data "lumapi:lumapi" non_GUI.py
+          RUN tar -czvf /app/GUI-linux-arm64.tar.gz -C /app/dist GUI-linux-arm64
+          RUN tar -czvf /app/non_GUI-linux-arm64.tar.gz -C /app/dist non_GUI-linux-arm64
+          EOF
+
+      - name: Run Build Container and Extract Artifacts
+        run: |
+          # 构建 Docker 镜像
+          docker buildx build --platform linux/arm64 -t lumapi-builder -f Dockerfile.build --load .
+          # 创建容器
+          id=$(docker create --platform linux/arm64 lumapi-builder)
+          # 复制出来
+          docker cp $id:/app/GUI-linux-arm64.tar.gz .
+          docker cp $id:/app/non_GUI-linux-arm64.tar.gz .
+          docker rm -v $id
+
+      - name: Upload Artifacts (ARM64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-archives
+          path: *.tar.gz
+
+  # 任务3: 发布 Release
+  release:
+    name: Create Release
+    needs: [build-standard, build-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-amd64-binaries
+          path: ./assets
+
+      - name: Download Linux AMD64 Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-amd64-archives
+          path: ./assets
+
+      - name: Download Linux ARM64 Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-arm64-archives
+          path: ./assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

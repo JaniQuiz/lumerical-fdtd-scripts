@@ -1,4 +1,6 @@
-tkinter
-matplotlib
 numpy
+matplotlib
 numba
+joblib
+tqdm
+pyinstaller

@@ -10,35 +10,16 @@ permissions:
   contents: write
 
 jobs:
-  # 任务1: 构建 Windows 和 Linux (AMD64) 版本
-  build-standard:
-    name: Build ${{ matrix.os }} (${{ matrix.arch }})
-    # [修改点 1] 动态选择 runner，如果是 Linux 则强制使用旧版 ubuntu-20.04 以保证兼容性
-    runs-on: ${{ matrix.runner }}
-    
+  # ===================================================
+  # 任务 1: Windows 构建 (AMD64)
+  # 兼容性: Windows 10, Windows 11, Windows Server 2016+
+  # ===================================================
+  build-windows:
+    name: Build Windows (amd64)
+    runs-on: windows-latest
     defaults:
       run:
         shell: bash
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows
-            arch: amd64
-            target_name: windows-amd64
-            # Windows 使用 latest 即可
-            runner: windows-latest
-            sep: ';'
-            ext: .exe
-          - os: linux
-            arch: amd64
-            target_name: linux-amd64
-            # [关键修改] 使用 ubuntu-20.04 (GLIBC 2.31) 而不是 ubuntu-latest (GLIBC 2.38+)
-            # 这样编译出的程序可以在 Ubuntu 20.04/22.04/24.04 等大多数系统上运行
-            runner: ubuntu-20.04
-            sep: ':'
-            ext: ''
 
     steps:
       - name: Checkout code
@@ -58,112 +39,137 @@ jobs:
         run: |
           mkdir -p lumapi
           echo "{}" > lumapi/config.json
+          # 仅用于调试，显示目录结构
           ls -R lumapi
 
-      - name: Build GUI (LumAPI_GUI)
+      # 1. 构建 GUI 版本 (LumAPI_GUI)
+      - name: Build GUI
         run: |
           pyinstaller --noconsole --onefile --clean \
-            --name LumAPI_GUI-${{ matrix.target_name }}${{ matrix.ext }} \
+            --name LumAPI_GUI-windows-amd64.exe \
             --hidden-import numpy \
-            --add-data "lumapi${{ matrix.sep }}lumapi" \
+            --hidden-import matplotlib \
+            --add-data "lumapi;lumapi" \
             GUI.py
 
-      - name: Build CLI (LumAPI_CLI)
+      # 2. 构建 CLI 版本 (LumAPI_CLI)
+      - name: Build CLI
         run: |
           pyinstaller --onefile --clean \
-            --name LumAPI_CLI-${{ matrix.target_name }}${{ matrix.ext }} \
+            --name LumAPI_CLI-windows-amd64.exe \
             --hidden-import numpy \
-            --add-data "lumapi${{ matrix.sep }}lumapi" \
+            --hidden-import matplotlib \
+            --add-data "lumapi;lumapi" \
             non_GUI.py
 
-      - name: Upload Artifacts (Windows)
-        if: matrix.os == 'windows'
+      - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target_name }}-binaries
+          name: windows-amd64-binaries
           path: dist/*.exe
 
-      - name: Package and Upload (Linux)
-        if: matrix.os == 'linux'
-        run: |
-          cd dist
-          tar -czvf LumAPI_GUI-${{ matrix.target_name }}.tar.gz LumAPI_GUI-${{ matrix.target_name }}
-          tar -czvf LumAPI_CLI-${{ matrix.target_name }}.tar.gz LumAPI_CLI-${{ matrix.target_name }}
-      
-      - name: Upload Artifacts (Linux)
-        if: matrix.os == 'linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target_name }}-archives
-          path: dist/*.tar.gz
-
-  # 任务2: 构建 Linux (ARM64) 版本 - 使用 QEMU
-  build-arm64:
-    name: Build Linux (arm64)
+  # ===================================================
+  # 任务 2: Linux 构建 (AMD64 & ARM64) - 容器化方案
+  # 兼容性: Ubuntu 20.04+, Debian 11+, CentOS 9+
+  # 策略: 使用 Debian Bullseye (GLIBC 2.31) 容器进行编译
+  # ===================================================
+  build-linux:
+    name: Build Linux (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            docker_tag: amd64-builder
+          - arch: arm64
+            platform: linux/arm64
+            docker_tag: arm64-builder
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 启用 QEMU 以支持多架构构建 (对 ARM64 至关重要)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Create Dockerfile for Build
+      # 动态生成 Dockerfile
+      # 使用 python:3.11-slim-bullseye 确保 GLIBC 2.31 兼容性 (覆盖 Ubuntu 20.04)
+      - name: Create Dockerfile
         run: |
           cat <<EOF > Dockerfile.build
-          # [关键修改] 使用 slim-bullseye (Debian 11) 以获得更好的 GLIBC 兼容性
           FROM python:3.11-slim-bullseye
           WORKDIR /app
-          COPY . /app
+          
+          # 安装必要的构建工具 (binutils 用于 pyinstaller)
           RUN apt-get update && apt-get install -y binutils && rm -rf /var/lib/apt/lists/*
+          
+          # 复制项目文件
+          COPY . /app
+          
+          # 安装依赖
           RUN pip install --no-cache-dir -r requirements.txt
+          
+          # 准备配置目录
           RUN mkdir -p lumapi && echo "{}" > lumapi/config.json
           
-          # GUI -> LumAPI_GUI
+          # 1. 构建 GUI (LumAPI_GUI) - 无控制台
           RUN pyinstaller --noconsole --onefile --clean \
-            --name LumAPI_GUI-linux-arm64 \
+            --name LumAPI_GUI-linux-${{ matrix.arch }} \
             --hidden-import numpy \
+            --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             GUI.py
             
-          # non_GUI -> LumAPI_CLI
+          # 2. 构建 CLI (LumAPI_CLI) - 有控制台
           RUN pyinstaller --onefile --clean \
-            --name LumAPI_CLI-linux-arm64 \
+            --name LumAPI_CLI-linux-${{ matrix.arch }} \
             --hidden-import numpy \
+            --hidden-import matplotlib \
             --add-data "lumapi:lumapi" \
             non_GUI.py
             
-          RUN tar -czvf /app/LumAPI_GUI-linux-arm64.tar.gz -C /app/dist LumAPI_GUI-linux-arm64
-          RUN tar -czvf /app/LumAPI_CLI-linux-arm64.tar.gz -C /app/dist LumAPI_CLI-linux-arm64
+          # 打包为 tar.gz 以保留 Linux 权限
+          RUN tar -czvf /app/LumAPI_GUI-linux-${{ matrix.arch }}.tar.gz -C /app/dist LumAPI_GUI-linux-${{ matrix.arch }}
+          RUN tar -czvf /app/LumAPI_CLI-linux-${{ matrix.arch }}.tar.gz -C /app/dist LumAPI_CLI-linux-${{ matrix.arch }}
           EOF
 
-      - name: Build inside Docker (ARM64)
+      # 使用 Docker Buildx 构建镜像 (在容器内完成编译)
+      - name: Build in Docker
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile.build
-          platforms: linux/arm64
+          platforms: ${{ matrix.platform }}
           push: false
           load: true
-          tags: lumapi-builder:latest
+          tags: ${{ matrix.docker_tag }}
 
+      # 从容器中提取编译好的文件
       - name: Extract Artifacts
         run: |
-          id=$(docker create --platform linux/arm64 lumapi-builder)
-          docker cp $id:/app/LumAPI_GUI-linux-arm64.tar.gz .
-          docker cp $id:/app/LumAPI_CLI-linux-arm64.tar.gz .
+          # 创建临时容器实例
+          id=$(docker create --platform ${{ matrix.platform }} ${{ matrix.docker_tag }})
+          # 复制文件出来
+          docker cp $id:/app/LumAPI_GUI-linux-${{ matrix.arch }}.tar.gz .
+          docker cp $id:/app/LumAPI_CLI-linux-${{ matrix.arch }}.tar.gz .
+          # 清理
           docker rm -v $id
 
-      - name: Upload Artifacts (ARM64)
+      - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-archives
+          name: linux-${{ matrix.arch }}-archives
           path: '*.tar.gz'
 
-  # 任务3: 发布 Release
+  # ===================================================
+  # 任务 3: 发布 Release
+  # ===================================================
   release:
     name: Create Release
-    needs: [build-standard, build-arm64]
+    needs: [build-windows, build-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

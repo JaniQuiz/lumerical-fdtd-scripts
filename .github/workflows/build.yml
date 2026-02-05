@@ -12,7 +12,6 @@ permissions:
 jobs:
   # ===================================================
   # 任务 1: Windows 构建 (AMD64)
-  # 兼容性: Windows 10, Windows 11, Windows Server 2016+
   # ===================================================
   build-windows:
     name: Build Windows (amd64)
@@ -39,26 +38,24 @@ jobs:
         run: |
           mkdir -p lumapi
           echo "{}" > lumapi/config.json
-          # 仅用于调试，显示目录结构
-          ls -R lumapi
 
-      # 1. 构建 GUI 版本 (LumAPI_GUI)
+      # 1. 构建 GUI (LumAPI_GUI)
       - name: Build GUI
         run: |
           pyinstaller --noconsole --onefile --clean \
             --name LumAPI_GUI-windows-amd64.exe \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            --exclude-module matplotlib \
             --add-data "lumapi;lumapi" \
             GUI.py
 
-      # 2. 构建 CLI 版本 (LumAPI_CLI)
+      # 2. 构建 CLI (LumAPI_CLI)
       - name: Build CLI
         run: |
           pyinstaller --onefile --clean \
             --name LumAPI_CLI-windows-amd64.exe \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            --exclude-module matplotlib \
             --add-data "lumapi;lumapi" \
             non_GUI.py
 
@@ -70,8 +67,6 @@ jobs:
 
   # ===================================================
   # 任务 2: Linux 构建 (AMD64 & ARM64) - 容器化方案
-  # 兼容性: Ubuntu 20.04+, Debian 11+, CentOS 9+
-  # 策略: 使用 Debian Bullseye (GLIBC 2.31) 容器进行编译
   # ===================================================
   build-linux:
     name: Build Linux (${{ matrix.arch }})
@@ -91,52 +86,47 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 启用 QEMU 以支持多架构构建 (对 ARM64 至关重要)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       # 动态生成 Dockerfile
-      # 使用 python:3.11-slim-bullseye 确保 GLIBC 2.31 兼容性 (覆盖 Ubuntu 20.04)
       - name: Create Dockerfile
         run: |
           cat <<EOF > Dockerfile.build
-          FROM python:3.11-slim-bullseye
+          # [关键修复 1] 使用完整版 bullseye 镜像 (非 slim)，确保包含 Tkinter/Tcl/Tk 支持
+          FROM python:3.11-bullseye
           WORKDIR /app
           
-          # 安装必要的构建工具 (binutils 用于 pyinstaller)
+          # 安装构建工具
           RUN apt-get update && apt-get install -y binutils && rm -rf /var/lib/apt/lists/*
           
-          # 复制项目文件
           COPY . /app
-          
-          # 安装依赖
           RUN pip install --no-cache-dir -r requirements.txt
-          
-          # 准备配置目录
           RUN mkdir -p lumapi && echo "{}" > lumapi/config.json
           
-          # 1. 构建 GUI (LumAPI_GUI) - 无控制台
+          # [关键修复 2] 移除 hidden-import matplotlib，增加 exclude-module matplotlib
+          
+          # 1. 构建 GUI (LumAPI_GUI)
           RUN pyinstaller --noconsole --onefile --clean \
             --name LumAPI_GUI-linux-${{ matrix.arch }} \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            --exclude-module matplotlib \
             --add-data "lumapi:lumapi" \
             GUI.py
             
-          # 2. 构建 CLI (LumAPI_CLI) - 有控制台
+          # 2. 构建 CLI (LumAPI_CLI)
           RUN pyinstaller --onefile --clean \
             --name LumAPI_CLI-linux-${{ matrix.arch }} \
             --hidden-import numpy \
-            --hidden-import matplotlib \
+            --exclude-module matplotlib \
             --add-data "lumapi:lumapi" \
             non_GUI.py
             
-          # 打包为 tar.gz 以保留 Linux 权限
+          # 打包
           RUN tar -czvf /app/LumAPI_GUI-linux-${{ matrix.arch }}.tar.gz -C /app/dist LumAPI_GUI-linux-${{ matrix.arch }}
           RUN tar -czvf /app/LumAPI_CLI-linux-${{ matrix.arch }}.tar.gz -C /app/dist LumAPI_CLI-linux-${{ matrix.arch }}
           EOF
 
-      # 使用 Docker Buildx 构建镜像 (在容器内完成编译)
       - name: Build in Docker
         uses: docker/build-push-action@v5
         with:
@@ -147,15 +137,11 @@ jobs:
           load: true
           tags: ${{ matrix.docker_tag }}
 
-      # 从容器中提取编译好的文件
       - name: Extract Artifacts
         run: |
-          # 创建临时容器实例
           id=$(docker create --platform ${{ matrix.platform }} ${{ matrix.docker_tag }})
-          # 复制文件出来
           docker cp $id:/app/LumAPI_GUI-linux-${{ matrix.arch }}.tar.gz .
           docker cp $id:/app/LumAPI_CLI-linux-${{ matrix.arch }}.tar.gz .
-          # 清理
           docker rm -v $id
 
       - name: Upload Linux Artifacts

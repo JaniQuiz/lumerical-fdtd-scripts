@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   # ===================================================
-  # 任务 1: Windows 构建 (AMD64)
+  # 任务 1: Windows 构建
+  # 产物: 直接输出 .exe 文件
   # ===================================================
   build-windows:
     name: Build Windows (amd64)
@@ -39,7 +40,7 @@ jobs:
           mkdir -p lumapi
           echo "{}" > lumapi/config.json
 
-      # 1. 构建 GUI (LumAPI_GUI)
+      # 1. 构建 GUI
       - name: Build GUI
         run: |
           pyinstaller --noconsole --onefile --clean \
@@ -49,7 +50,7 @@ jobs:
             --add-data "lumapi;lumapi" \
             GUI.py
 
-      # 2. 构建 CLI (LumAPI_CLI)
+      # 2. 构建 CLI
       - name: Build CLI
         run: |
           pyinstaller --onefile --clean \
@@ -59,14 +60,16 @@ jobs:
             --add-data "lumapi;lumapi" \
             non_GUI.py
 
+      # 上传产物：直接上传 exe
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-amd64-binaries
+          name: artifacts-windows
           path: dist/*.exe
 
   # ===================================================
-  # 任务 2: Linux 构建 (AMD64 & ARM64) - 容器化方案
+  # 任务 2: Linux 构建 (AMD64 & ARM64)
+  # 产物: tar.gz 压缩包 (根目录下直接包含可执行文件)
   # ===================================================
   build-linux:
     name: Build Linux (${{ matrix.arch }})
@@ -93,7 +96,6 @@ jobs:
       - name: Create Dockerfile
         run: |
           cat <<EOF > Dockerfile.build
-          # [关键修复 1] 使用完整版 bullseye 镜像 (非 slim)，确保包含 Tkinter/Tcl/Tk 支持
           FROM python:3.11-bullseye
           WORKDIR /app
           
@@ -104,9 +106,7 @@ jobs:
           RUN pip install --no-cache-dir -r requirements.txt
           RUN mkdir -p lumapi && echo "{}" > lumapi/config.json
           
-          # [关键修复 2] 移除 hidden-import matplotlib，增加 exclude-module matplotlib
-          
-          # 1. 构建 GUI (LumAPI_GUI)
+          # 1. 构建 GUI
           RUN pyinstaller --noconsole --onefile --clean \
             --name LumAPI_GUI-linux-${{ matrix.arch }} \
             --hidden-import numpy \
@@ -114,7 +114,7 @@ jobs:
             --add-data "lumapi:lumapi" \
             GUI.py
             
-          # 2. 构建 CLI (LumAPI_CLI)
+          # 2. 构建 CLI
           RUN pyinstaller --onefile --clean \
             --name LumAPI_CLI-linux-${{ matrix.arch }} \
             --hidden-import numpy \
@@ -122,9 +122,12 @@ jobs:
             --add-data "lumapi:lumapi" \
             non_GUI.py
             
-          # 打包
-          RUN tar -czvf /app/LumAPI_GUI-linux-${{ matrix.arch }}.tar.gz -C /app/dist LumAPI_GUI-linux-${{ matrix.arch }}
-          RUN tar -czvf /app/LumAPI_CLI-linux-${{ matrix.arch }}.tar.gz -C /app/dist LumAPI_CLI-linux-${{ matrix.arch }}
+          # [关键步骤] 打包为 tar.gz
+          # 使用 'cd /app/dist && tar ...' 确保压缩包内不包含路径前缀
+          # 这样解压后直接就是可执行文件，没有 dist/ 文件夹
+          RUN cd /app/dist && \
+              tar -czvf /app/LumAPI_GUI-linux-${{ matrix.arch }}.tar.gz LumAPI_GUI-linux-${{ matrix.arch }} && \
+              tar -czvf /app/LumAPI_CLI-linux-${{ matrix.arch }}.tar.gz LumAPI_CLI-linux-${{ matrix.arch }}
           EOF
 
       - name: Build in Docker
@@ -147,11 +150,12 @@ jobs:
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.arch }}-archives
+          name: artifacts-linux-${{ matrix.arch }}
           path: '*.tar.gz'
 
   # ===================================================
   # 任务 3: 发布 Release
+  # 收集所有产物并发布
   # ===================================================
   release:
     name: Create Release
@@ -159,22 +163,25 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      # 下载 Windows 产物 (exe)
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-amd64-binaries
+          name: artifacts-windows
           path: ./assets
 
+      # 下载 Linux AMD64 产物 (tar.gz)
       - name: Download Linux AMD64 Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-amd64-archives
+          name: artifacts-linux-amd64
           path: ./assets
 
+      # 下载 Linux ARM64 产物 (tar.gz)
       - name: Download Linux ARM64 Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-arm64-archives
+          name: artifacts-linux-arm64
           path: ./assets
 
       - name: Create GitHub Release
